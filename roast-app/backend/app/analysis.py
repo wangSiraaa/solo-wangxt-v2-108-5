@@ -265,8 +265,8 @@ def build_series(
 def current_events(events: list[dict]) -> dict[str, dict]:
     """Map event_type -> the latest non-superseded event row (as dict)."""
     out: dict[str, dict] = {}
-    for e in sorted(events, key=lambda e: (e["t_s"], e["id"])):
-        if not e["superseded"]:
+    for e in sorted(events, key=lambda e: (e["t_s"], e.get("id") or 0)):
+        if not e.get("superseded", False):
             out[e["event_type"]] = e
     return out
 

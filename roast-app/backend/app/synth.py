@@ -9,15 +9,23 @@ Produces a physically-shaped bean curve with:
   inspect before/after curves — the UI never claims causation,
 * auto-detected/suggested turning point and first-crack events marked with
   source='auto'.
+
+Every batch produced here carries explicit synthetic provenance
+(``is_synthetic`` / ``synthetic_kind`` / ``generator``).  The deterministic
+control batch (:func:`control_batch`) is a separate, fully reproducible recipe
+with complete samples and every key event, generated only locally on demand —
+it is never described as machine data and never uploaded anywhere.
 """
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timedelta
 
 import numpy as np
 
 from .analysis import detect_turning_point
+from .models import PROV_CONTROL, PROV_DEMO_PAIR, PROV_GENERATOR
 
 RNG = np.random.default_rng
 
@@ -162,6 +170,9 @@ def generate_batch(
         "ambient_temp_c": ambient_temp_c,
         "target_drop_temp_c": drop_temp_c,
         "note": "合成数据：含测量噪声、不均采样与探针缺测；未连接真实烘焙机。",
+        "is_synthetic": True,
+        "synthetic_kind": PROV_DEMO_PAIR,
+        "generator": PROV_GENERATOR,
         "samples": samples,
         "events": events,
     }
@@ -184,3 +195,85 @@ def two_demo_batches() -> list[dict]:
             damper_t=None,  # no damper change: control for comparison
         ),
     ]
+
+
+# Fixed identity of the deterministic control batch.  Nothing here is random
+# across calls: a fixed seed, no dropouts and complete key events mean that two
+# local users (or an export + an independent replay) see byte-identical curves.
+CONTROL_BATCH_NAME = "SYN-CONTROL-LOCAL-01"
+CONTROL_BATCH_SEED = 20261003
+CONTROL_BATCH_RECIPE = "deterministic_control_batch_v1"
+
+
+def control_batch() -> dict:
+    """Deterministic *local* reference batch with complete samples + key events.
+
+    Deliberately distinct from the two dropout-bearing demo batches: even
+    sampling jitter from a fixed seed, modest measurement noise, **no probe
+    dropouts**, and every key event (charge / turning point / first crack start
+    and end / drop).  It exists only so a three-member group can be assembled
+    without importing artifacts from another exercise.  The returned payload is
+    marked on every possible surface (synthetic_kind, generator recipe string,
+    roaster label and note) as a local synthetic demo — never a machine upload.
+    """
+    spec = generate_batch(
+        name=CONTROL_BATCH_NAME,
+        seed=CONTROL_BATCH_SEED,
+        bean="Brazil Cerrado (合成对照豆种)",
+        roaster="LOCAL-SYNTHETIC-CONTROL (本地生成, 非真实烘焙机, 不上传)",
+        damper_t=None,
+        duration_s=620.0,
+        ambient_temp_c=22.0,
+        drop_temp_c=205.0,
+        bean_noise_sd=0.5,
+        env_noise_sd=0.9,
+        dropout_ranges_s=(),  # complete samples: no NULLs anywhere
+    )
+    spec["synthetic_kind"] = PROV_CONTROL
+    spec["generator"] = f"{PROV_GENERATOR}; recipe={CONTROL_BATCH_RECIPE}; seed={CONTROL_BATCH_SEED}"
+    spec["note"] = (
+        "本地合成演示对照批次（确定性 recipe="
+        f"{CONTROL_BATCH_RECIPE}, seed={CONTROL_BATCH_SEED}）：采样完整、无探针缺测、"
+        "关键事件齐全。仅用于组比较演示，不是真实稳定性结论，不来自真实烘焙机，也不是上传数据。"
+    )
+    # The generic event labels say "可修正"; keep them but make the demo origin
+    # of the whole batch unmistakable in the payload-level fields above.
+    return spec
+
+
+def control_identity() -> dict:
+    """Stable identity descriptor used in exports, legends and group results."""
+    return {
+        "name": CONTROL_BATCH_NAME,
+        "synthetic": True,
+        "synthetic_kind": PROV_CONTROL,
+        "generator": f"{PROV_GENERATOR}; recipe={CONTROL_BATCH_RECIPE}; seed={CONTROL_BATCH_SEED}",
+        "recipe": CONTROL_BATCH_RECIPE,
+        "seed": CONTROL_BATCH_SEED,
+        "label": "本地合成对照（非真实烘焙机数据，仅演示，不构成稳定性结论）",
+    }
+
+
+def _json_default(obj):  # pragma: no cover - defensive
+    if isinstance(obj, (np.floating, np.integer)):
+        return obj.item()
+    raise TypeError(f"not serializable: {type(obj)}")
+
+
+def control_fingerprint(spec: dict) -> str:
+    """SHA-256 over the deterministic inputs/outputs, for replay equality."""
+    import hashlib
+
+    payload = json.dumps(
+        {
+            "name": spec["name"],
+            "synthetic_kind": spec.get("synthetic_kind"),
+            "generator": spec.get("generator"),
+            "samples": spec["samples"],
+            "events": spec["events"],
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=_json_default,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
