@@ -9,6 +9,13 @@ Produces a physically-shaped bean curve with:
   inspect before/after curves — the UI never claims causation,
 * auto-detected/suggested turning point and first-crack events marked with
   source='auto'.
+
+Every generated batch carries explicit provenance (``data_origin``, seed and
+generator version).  ``local_control_batch`` is the *deterministic local
+control* entry used to make a >=3-batch group from the two existing demo
+batches without importing anything from elsewhere: same generator, a fixed
+seed, and the label ``local_synthetic_control`` everywhere the data travels.
+It is and stays marked as a local synthetic demo — never as real roaster data.
 """
 from __future__ import annotations
 
@@ -18,8 +25,14 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from .analysis import detect_turning_point
+from .models import GENERATOR_VERSION, ORIGIN_LOCAL_SYNTHETIC, ORIGIN_LOCAL_SYNTHETIC_CONTROL
 
 RNG = np.random.default_rng
+
+# Fixed seed for the deterministic local control: regenerating it anywhere
+# (another machine, recompute endpoint) yields byte-identical samples.
+CONTROL_SEED = 20260920
+CONTROL_NAME = "SYN-LOCAL-CONTROL-C"
 
 
 def _bean_curve(t: np.ndarray, *, damper_t: float | None, damper_strength: float) -> np.ndarray:
@@ -67,6 +80,8 @@ def generate_batch(
     bean_noise_sd: float = 0.8,
     env_noise_sd: float = 1.4,
     dropout_ranges_s: tuple[tuple[float, float], ...] = ((150.0, 158.0), (420.0, 480.0)),
+    data_origin: str = ORIGIN_LOCAL_SYNTHETIC,
+    is_control_batch: bool = False,
 ) -> dict:
     rng = RNG(seed)
 
@@ -153,6 +168,14 @@ def generate_batch(
          "label": "出锅(自动建议, 可修正)"}
     )
 
+    if is_control_batch:
+        note = (
+            "本地合成对照批次（确定性生成器，固定种子；未连接真实烘焙机、未上传测量数据）。"
+            "仅用于本地演示批次组聚合，不构成真实稳定性结论。"
+        )
+    else:
+        note = "合成数据：含测量噪声、不均采样与探针缺测；未连接真实烘焙机。"
+
     return {
         "name": name,
         "roaster": roaster,
@@ -161,9 +184,15 @@ def generate_batch(
         "charge_temp_c": 180.0,
         "ambient_temp_c": ambient_temp_c,
         "target_drop_temp_c": drop_temp_c,
-        "note": "合成数据：含测量噪声、不均采样与探针缺测；未连接真实烘焙机。",
+        "note": note,
         "samples": samples,
         "events": events,
+        # Provenance — follows the batch into snapshots, legend, export.
+        "data_origin": data_origin,
+        "is_local_synthetic": True,
+        "is_control_batch": is_control_batch,
+        "generator_seed": int(seed),
+        "generator_version": GENERATOR_VERSION,
     }
 
 
@@ -184,3 +213,26 @@ def two_demo_batches() -> list[dict]:
             damper_t=None,  # no damper change: control for comparison
         ),
     ]
+
+
+def local_control_batch() -> dict:
+    """Deterministic local-only control batch ("batch C").
+
+    Fixed seed → regenerating this entry anywhere reproduces the complete
+    samples and key events exactly.  Designed so that its first-crack anchor
+    (modelled ~480 s) has a *measured* sample within the standard support
+    tolerance, i.e. it aligns cleanly with the two existing demo batches for a
+    >=3-member group despite their ~420--480 s long dropout.
+    """
+    return generate_batch(
+        name=CONTROL_NAME,
+        seed=CONTROL_SEED,
+        bean="Brazil Cerrado (本地合成对照豆种, 非真实批次)",
+        # The long modelled dropout ends at 470 s here, leaving measured points
+        # immediately around the 480 s first-crack anchor; the short dropout
+        # and wide-gap mechanics otherwise match batches A/B.
+        dropout_ranges_s=((150.0, 158.0), (410.0, 470.0)),
+        damper_t=None,
+        data_origin=ORIGIN_LOCAL_SYNTHETIC_CONTROL,
+        is_control_batch=True,
+    )

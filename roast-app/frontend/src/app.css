@@ -66,3 +66,28 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; margin-right
   padding: 8px 12px;
   font-size: 13px;
 }
+button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.notice-float {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  max-width: 460px;
+  background: #24301f;
+  border: 1px solid #4a6b3a;
+  color: #bfe3a8;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  z-index: 50;
+}
+.tag.local_synthetic_control {
+  color: #e3a8e0;
+  border-color: #6b3a68;
+}
+.tag.local_synthetic_demo {
+  color: #f3c98b;
+  border-color: #6b5326;
+}

@@ -1,9 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import RoastChart from './lib/RoastChart.svelte';
+  import GroupView from './lib/GroupView.svelte';
   import {
     getBatches,
     seed,
+    seedControl,
     getSeries,
     getCompare,
     addEvent,
@@ -12,10 +14,11 @@
     recompute,
     EVENT_LABELS,
     fmtTime,
+    originTag,
   } from './lib/api.js';
 
   let batches = [];
-  let view = 'single'; // single | compare
+  let view = 'single'; // single | compare | group
   let selA = null;
   let selB = null;
   let dataA = null;
@@ -24,6 +27,14 @@
   let eventHistory = [];
   let loading = '';
   let error = '';
+  let notice = '';
+  let groupKey = 0; // bumped to force the group view to reload
+
+  function showNotice(msg) {
+    notice = msg;
+    error = '';
+    setTimeout(() => (notice = ''), 6000);
+  }
 
   // Analysis parameters — affect DERIVED traces only, never stored samples.
   let windowS = 30;
@@ -69,6 +80,20 @@
     try {
       await seed();
       await loadBatches();
+    } catch (e) {
+      error = e.message;
+    } finally {
+      loading = '';
+    }
+  }
+
+  async function doSeedControl() {
+    loading = '正在生成本地确定性对照批次…';
+    error = '';
+    try {
+      await seedControl();
+      await loadBatches();
+      groupKey += 1;
     } catch (e) {
       error = e.message;
     } finally {
@@ -231,7 +256,10 @@
         {#if batches.length === 0}
           <button on:click={doSeed}>① 生成两个合成批次（含噪声/不均采样/探针缺测）</button>
         {:else}
-          <button class="ghost" on:click={doSeed}>重新生成合成批次</button>
+          <div class="row" style="gap:6px">
+            <button class="ghost" on:click={doSeed}>重新生成合成批次</button>
+            <button class="ghost" on:click={doSeedControl}>② 生成本地对照批次 C</button>
+          </div>
         {/if}
       </div>
       <div>
@@ -242,12 +270,15 @@
         <label class="inline">
           <input type="radio" bind:group={view} value="compare" on:change={refresh} />双批次对比
         </label>
+        <label class="inline">
+          <input type="radio" bind:group={view} value="group" on:change={() => (groupKey += 1)} />批次组
+        </label>
       </div>
       <div>
         <div class="muted">批次 A</div>
         <select bind:value={selA} on:change={refresh}>
           {#each batches as b}
-            <option value={b.id}>{b.name} · {b.bean}</option>
+            <option value={b.id}>[{originTag(b) || '—'}] {b.name} · {b.bean}</option>
           {/each}
         </select>
       </div>
@@ -256,7 +287,7 @@
           <div class="muted">批次 B</div>
           <select bind:value={selB} on:change={refresh}>
             {#each batches as b}
-              <option value={b.id}>{b.name} · {b.bean}</option>
+              <option value={b.id}>[{originTag(b) || '—'}] {b.name} · {b.bean}</option>
             {/each}
           </select>
         </div>
@@ -311,7 +342,7 @@
     </div>
   </section>
 
-  {#if dataA}
+  {#if dataA && view !== 'group'}
     <section class="panel">
       <RoastChart {chartPayloads} {windowS} {smoothS} />
       <div class="row" style="margin-top:6px;font-size:12px">
@@ -488,4 +519,17 @@
       </div>
     </section>
   {/if}
+
+  {#if view === 'group'}
+    {#key groupKey}
+      <GroupView
+        {batches}
+        reloadBatches={loadBatches}
+        notify={(msg, isError) => (isError ? (error = msg) : showNotice(msg))}
+      />
+    {/key}
+  {/if}
+{#if notice}
+  <div class="notice-float">{notice}</div>
+{/if}
 </main>
